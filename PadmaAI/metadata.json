@@ -1,7 +1,0 @@
-{
-  "name": "Padma AI",
-  "description": "A sophisticated, production-grade voice assistant interface with real-time intelligence and intent management.",
-  "requestFramePermissions": [
-    "microphone"
-  ]
-}

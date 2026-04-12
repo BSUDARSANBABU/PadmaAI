@@ -134,8 +134,25 @@ export default function ChatBubble({ message, searchQuery = '', onUpdate }: Chat
             </div>
           </div>
         ) : (
-          <div className="whitespace-pre-wrap">
-            {highlightText(message.text, searchQuery)}
+          <div className="space-y-3">
+            <div className="whitespace-pre-wrap">
+              {highlightText(message.text, searchQuery)}
+            </div>
+            {message.summary && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="pt-3 mt-3 border-t border-surface-variant/20"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="w-1 h-3 bg-primary rounded-full" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-primary">Neural Summary</span>
+                </div>
+                <p className="text-xs italic text-on-surface-variant leading-relaxed">
+                  "{message.summary}"
+                </p>
+              </motion.div>
+            )}
           </div>
         )}
       </div>

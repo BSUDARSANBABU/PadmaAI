@@ -29,6 +29,9 @@ export default function App() {
     const saved = localStorage.getItem('padma_voice_profiles');
     return saved ? JSON.parse(saved) : MOCK_VOICE_PROFILES;
   });
+  const [isGoogleAuthenticated, setIsGoogleAuthenticated] = useState(false);
+  const [googleEvents, setGoogleEvents] = useState<any[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [showCaptions, setShowCaptions] = useState(true);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -124,6 +127,104 @@ export default function App() {
     }
   };
 
+  const summarizeText = async (text: string) => {
+    if (!text || text.length < 50) return null;
+    try {
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const prompt = `Summarize the following AI response in one concise sentence (max 15 words). Focus on the key action or information: "${text}"`;
+      const result = await model.generateContent(prompt);
+      return result.response.text().trim();
+    } catch (error) {
+      console.error("Summarization error:", error);
+      return null;
+    }
+  };
+
+  const handleVoiceCommands = (transcript: string) => {
+    const text = transcript.toLowerCase();
+    
+    // Theme Commands
+    if (text.includes("dark mode") || text.includes("switch to dark")) {
+      setTheme('dark');
+      speakText("Switching to dark mode.");
+      return true;
+    }
+    if (text.includes("light mode") || text.includes("switch to light")) {
+      setTheme('light');
+      speakText("Switching to light mode.");
+      return true;
+    }
+
+    // Navigation Commands
+    if (text.includes("go to home") || text.includes("show home") || text.includes("open home")) {
+      setCurrentView('home');
+      speakText("Navigating to home.");
+      return true;
+    }
+    if (text.includes("go to schedule") || text.includes("show schedule") || text.includes("open schedule")) {
+      setCurrentView('schedule');
+      speakText("Opening your schedule.");
+      return true;
+    }
+    if (text.includes("go to history") || text.includes("show history") || text.includes("open history")) {
+      setCurrentView('history');
+      speakText("Opening interaction history.");
+      return true;
+    }
+    if (text.includes("go to settings") || text.includes("show settings") || text.includes("open settings")) {
+      setCurrentView('settings');
+      speakText("Opening system settings.");
+      return true;
+    }
+
+    // Caption Commands
+    if (text.includes("show captions") || text.includes("enable captions") || text.includes("turn on captions")) {
+      setShowLiveCaptions(true);
+      speakText("Live captions enabled.");
+      return true;
+    }
+    if (text.includes("hide captions") || text.includes("disable captions") || text.includes("turn off captions")) {
+      setShowLiveCaptions(false);
+      speakText("Live captions disabled.");
+      return true;
+    }
+
+    // Settings Adjustments
+    if (text.includes("increase volume") || text.includes("volume up")) {
+      const newVol = Math.min(1, volume + 0.1);
+      handleVolumeChange(newVol);
+      speakText(`Volume increased to ${Math.round(newVol * 100)} percent.`);
+      return true;
+    }
+    if (text.includes("decrease volume") || text.includes("volume down")) {
+      const newVol = Math.max(0, volume - 0.1);
+      handleVolumeChange(newVol);
+      speakText(`Volume decreased to ${Math.round(newVol * 100)} percent.`);
+      return true;
+    }
+    if (text.includes("faster") || text.includes("increase speed")) {
+      const newRate = Math.min(2.0, speechRate + 0.2);
+      setSpeechRate(newRate);
+      speakText(`Speech rate increased to ${newRate.toFixed(1)}x.`);
+      return true;
+    }
+    if (text.includes("slower") || text.includes("decrease speed")) {
+      const newRate = Math.max(0.5, speechRate - 0.2);
+      setSpeechRate(newRate);
+      speakText(`Speech rate decreased to ${newRate.toFixed(1)}x.`);
+      return true;
+    }
+
+    // History Commands
+    if (text.includes("clear history") || text.includes("purge history") || text.includes("delete history")) {
+      clearHistory();
+      speakText("Interaction history has been purged.");
+      return true;
+    }
+
+    return false;
+  };
+
   const [searchHistory, setSearchHistory] = useState<string[]>(() => {
     const saved = localStorage.getItem('padma_search_history');
     return saved ? JSON.parse(saved) : [];
@@ -206,11 +307,13 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem('padma_speech_rate', speechRate.toString());
-  }, [speechRate]);
+    liveService.setSpeechRate(speechRate);
+  }, [speechRate, liveService]);
 
   useEffect(() => {
     localStorage.setItem('padma_speech_pitch', speechPitch.toString());
-  }, [speechPitch]);
+    liveService.setSpeechPitch(speechPitch);
+  }, [speechPitch, liveService]);
 
   useEffect(() => {
     localStorage.setItem('padma_tts_model', ttsModel);
@@ -221,15 +324,99 @@ export default function App() {
   }, [responseLanguage]);
 
   useEffect(() => {
+    checkGoogleAuthStatus();
+  }, []);
+
+  const checkGoogleAuthStatus = async () => {
+    try {
+      const response = await fetch('/api/auth/status');
+      const data = await response.json();
+      setIsGoogleAuthenticated(data.isAuthenticated);
+      if (data.isAuthenticated) {
+        fetchGoogleEvents();
+      }
+    } catch (error) {
+      console.error('Failed to check Google auth status:', error);
+    }
+  };
+
+  const handleGoogleConnect = async () => {
+    try {
+      const response = await fetch('/api/auth/google/url');
+      const { url } = await response.json();
+      const authWindow = window.open(url, 'google_auth', 'width=600,height=700');
+      
+      if (!authWindow) {
+        speakText("Please allow popups to connect your Google Calendar.");
+        return;
+      }
+    } catch (error) {
+      console.error('Failed to get Google auth URL:', error);
+    }
+  };
+
+  const fetchGoogleEvents = async () => {
+    setIsSyncing(true);
+    try {
+      const response = await fetch('/api/calendar/events');
+      if (response.ok) {
+        const events = await response.json();
+        setGoogleEvents(events);
+      } else if (response.status === 401) {
+        setIsGoogleAuthenticated(false);
+      }
+    } catch (error) {
+      console.error('Failed to fetch Google events:', error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const addGoogleEvent = async (summary: string, description: string, start: string, end: string) => {
+    try {
+      const response = await fetch('/api/calendar/events/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ summary, description, start, end })
+      });
+      if (response.ok) {
+        fetchGoogleEvents();
+        return true;
+      }
+    } catch (error) {
+      console.error('Failed to add Google event:', error);
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'GOOGLE_AUTH_SUCCESS') {
+        setIsGoogleAuthenticated(true);
+        fetchGoogleEvents();
+        speakText("Google Calendar successfully connected.");
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [chatMessages]);
 
   useEffect(() => {
-    if (captionContainerRef.current) {
-      captionContainerRef.current.scrollTop = captionContainerRef.current.scrollHeight;
-    }
+    const scrollToBottom = () => {
+      if (captionContainerRef.current) {
+        captionContainerRef.current.scrollTop = captionContainerRef.current.scrollHeight;
+      }
+    };
+    
+    // Use a small timeout to ensure DOM has updated
+    const timeoutId = setTimeout(scrollToBottom, 50);
+    return () => clearTimeout(timeoutId);
   }, [sessionCaptions]);
 
   const toggleReminder = (id: string) => {
@@ -501,7 +688,8 @@ export default function App() {
               const last = prev[prev.length - 1];
               if (last && last.sender === sender) {
                 const updated = [...prev];
-                updated[updated.length - 1] = { ...last, text: processedText };
+                const newText = isIncremental ? last.text + processedText : processedText;
+                updated[updated.length - 1] = { ...last, text: newText };
                 return updated;
               }
               return [...prev, { sender, text: processedText }];
@@ -539,9 +727,29 @@ export default function App() {
               setCurrentTranscription('');
             }
           },
-          onAudioEnd: () => {
+          onAudioEnd: async () => {
             setIsThinking(false);
             setAiLiveCaption("");
+            
+            // Trigger summarization for the last AI message
+            if (activeTurnRef.current?.sender === 'ai') {
+              const lastAiMessageId = activeTurnRef.current.id;
+              setChatMessages(prev => {
+                const lastMsg = prev.find(m => m.id === lastAiMessageId);
+                if (lastMsg && lastMsg.text.length > 50 && !lastMsg.summary) {
+                  // We'll trigger the async summary and update state later
+                  summarizeText(lastMsg.text).then(summary => {
+                    if (summary) {
+                      setChatMessages(current => current.map(m => 
+                        m.id === lastAiMessageId ? { ...m, summary } : m
+                      ));
+                    }
+                  });
+                }
+                return prev;
+              });
+            }
+
             // Ensure the last transcription is saved if it hasn't been already
             activeTurnRef.current = null;
           },
@@ -554,7 +762,7 @@ export default function App() {
             setIsListening(false);
             setIsThinking(false);
           }
-        }, voiceName, speechRate, speechPitch, ttsModel, userName, historyContext);
+        }, voiceName, speechRate, speechPitch, ttsModel, userName, historyContext, responseLanguage);
       } catch (error: any) {
         console.error("Mic toggle error:", error);
         setIsListening(false);
@@ -608,6 +816,12 @@ export default function App() {
               setLiveCaption(transcript);
             }
 
+            // Handle Voice Commands
+            if (isFinal) {
+              const wasCommand = handleVoiceCommands(transcript);
+              if (wasCommand) return;
+            }
+
             // Handle scheduling command
             if (transcript.toLowerCase().includes("ai schedule my time")) {
               const meetingTitle = "Meeting with someone";
@@ -624,6 +838,18 @@ export default function App() {
               };
               
               setReminders(prev => [...prev, newReminder]);
+
+              // Add to Google Calendar if authenticated
+              if (isGoogleAuthenticated) {
+                // For demo purposes, we'll schedule it for tomorrow at 2:45 PM
+                const start = new Date();
+                start.setDate(start.getDate() + 1);
+                start.setHours(14, 45, 0, 0);
+                const end = new Date(start.getTime() + 60 * 60 * 1000); // 1 hour later
+                
+                addGoogleEvent(meetingTitle, "Scheduled via Padma AI", start.toISOString(), end.toISOString());
+              }
+
               setChatMessages(prev => [...prev, {
                 id: Date.now().toString() + '-ai',
                 sender: 'ai',
@@ -1473,15 +1699,32 @@ export default function App() {
                           <label className="text-sm font-bold text-on-surface tracking-wide uppercase">Speech Rate</label>
                           <span className="text-sm font-medium text-primary">{speechRate.toFixed(1)}x</span>
                         </div>
-                        <input 
-                          type="range" 
-                          min="0.5" 
-                          max="2.0" 
-                          step="0.1" 
-                          value={speechRate} 
-                          onChange={(e) => setSpeechRate(parseFloat(e.target.value))}
-                          className="w-full h-2 bg-surface-container-high rounded-full appearance-none cursor-pointer accent-primary"
-                        />
+                        <div className="relative pt-2">
+                          <input 
+                            type="range" 
+                            min="0.5" 
+                            max="2.0" 
+                            step="0.1" 
+                            value={speechRate} 
+                            onChange={(e) => setSpeechRate(parseFloat(e.target.value))}
+                            className="w-full h-2 bg-surface-container-high rounded-full appearance-none cursor-pointer accent-primary relative z-10"
+                          />
+                          <div className="flex justify-between mt-2 px-1">
+                            {[0.5, 0.8, 1.0, 1.2, 1.5, 1.8, 2.0].map((val) => (
+                              <div 
+                                key={val} 
+                                className={`w-1 h-3 rounded-full transition-all duration-300 ${
+                                  val <= speechRate ? 'bg-primary' : 'bg-surface-container-high'
+                                }`} 
+                              />
+                            ))}
+                          </div>
+                          <div className="flex justify-between mt-1 px-1">
+                            <span className="text-[8px] font-bold text-on-surface-variant/40">0.5x</span>
+                            <span className="text-[8px] font-bold text-primary">1.0x</span>
+                            <span className="text-[8px] font-bold text-on-surface-variant/40">2.0x</span>
+                          </div>
+                        </div>
                       </div>
 
                       <div className="space-y-6">
@@ -1489,15 +1732,32 @@ export default function App() {
                           <label className="text-sm font-bold text-on-surface tracking-wide uppercase">Pitch</label>
                           <span className="text-sm font-medium text-primary">{speechPitch.toFixed(1)}x</span>
                         </div>
-                        <input 
-                          type="range" 
-                          min="0.5" 
-                          max="2.0" 
-                          step="0.1" 
-                          value={speechPitch} 
-                          onChange={(e) => setSpeechPitch(parseFloat(e.target.value))}
-                          className="w-full h-2 bg-surface-container-high rounded-full appearance-none cursor-pointer accent-primary"
-                        />
+                        <div className="relative pt-2">
+                          <input 
+                            type="range" 
+                            min="0.5" 
+                            max="2.0" 
+                            step="0.1" 
+                            value={speechPitch} 
+                            onChange={(e) => setSpeechPitch(parseFloat(e.target.value))}
+                            className="w-full h-2 bg-surface-container-high rounded-full appearance-none cursor-pointer accent-primary relative z-10"
+                          />
+                          <div className="flex justify-between mt-2 px-1">
+                            {[0.5, 0.8, 1.0, 1.2, 1.5, 1.8, 2.0].map((val) => (
+                              <div 
+                                key={val} 
+                                className={`w-1 h-3 rounded-full transition-all duration-300 ${
+                                  val <= speechPitch ? 'bg-primary' : 'bg-surface-container-high'
+                                }`} 
+                              />
+                            ))}
+                          </div>
+                          <div className="flex justify-between mt-1 px-1">
+                            <span className="text-[8px] font-bold text-on-surface-variant/40">Deep</span>
+                            <span className="text-[8px] font-bold text-primary">Normal</span>
+                            <span className="text-[8px] font-bold text-on-surface-variant/40">High</span>
+                          </div>
+                        </div>
                       </div>
 
                       <div className="pt-4">
@@ -1604,7 +1864,14 @@ export default function App() {
               exit={{ opacity: 0, x: -20 }}
               className="max-w-7xl mx-auto p-6 lg:p-12"
             >
-              <MySchedule reminders={reminders} />
+              <MySchedule 
+                reminders={reminders} 
+                googleEvents={googleEvents}
+                isGoogleAuthenticated={isGoogleAuthenticated}
+                onConnectGoogle={handleGoogleConnect}
+                onSync={fetchGoogleEvents}
+                isSyncing={isSyncing}
+              />
             </motion.div>
           )}
 
@@ -1780,66 +2047,45 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        <AnimatePresence mode="wait">
-          {isListening && showLiveCaptions && liveCaption && (
+        <AnimatePresence>
+          {isListening && showLiveCaptions && sessionCaptions.length > 0 && (
             <motion.div
-              key="user-caption"
-              initial={{ opacity: 0, y: 40, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 20, scale: 0.98 }}
-              transition={{ type: "spring", damping: 25, stiffness: 400 }}
-              className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[70] px-8 py-6 bg-indigo-600/90 backdrop-blur-2xl rounded-[2.5rem] border border-white/30 shadow-[0_25px_60px_-15px_rgba(79,70,229,0.5)] max-w-[92vw] md:max-w-2xl w-full text-center overflow-hidden"
+              initial={{ opacity: 0, y: 50 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 50 }}
+              className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[70] w-full max-w-[92vw] md:max-w-2xl"
             >
-              <div className="absolute inset-0 bg-gradient-to-b from-white/10 to-transparent pointer-events-none" />
-              <div className="flex items-center justify-center gap-3 mb-4 relative z-10">
-                <div className="p-1.5 rounded-full bg-white/20 backdrop-blur-md">
-                  <User size={14} className="text-white" />
-                </div>
-                <span className="text-[10px] font-black text-white/90 uppercase tracking-[0.4em] drop-shadow-sm">User Intent</span>
+              <div 
+                ref={captionContainerRef}
+                className="max-h-[40vh] overflow-y-auto scroll-smooth flex flex-col gap-3 p-4 bg-black/40 backdrop-blur-3xl rounded-[2.5rem] border border-white/20 shadow-2xl no-scrollbar"
+              >
+                {sessionCaptions.map((caption, idx) => (
+                  <motion.div
+                    key={idx}
+                    initial={{ opacity: 0, x: caption.sender === 'user' ? 20 : -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className={`flex flex-col gap-1 p-4 rounded-2xl max-w-[90%] ${
+                      caption.sender === 'user' 
+                        ? 'self-end bg-indigo-600/80 text-white rounded-tr-none' 
+                        : 'self-start bg-teal-600/80 text-white rounded-tl-none'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      {caption.sender === 'user' ? (
+                        <User size={12} className="text-white/70" />
+                      ) : (
+                        <Sparkles size={12} className="text-white/70" />
+                      )}
+                      <span className="text-[9px] font-black uppercase tracking-widest text-white/70">
+                        {caption.sender === 'user' ? 'User Intent' : 'Padma Synthesis'}
+                      </span>
+                    </div>
+                    <p className="text-sm md:text-base font-medium leading-tight">
+                      {caption.text}
+                    </p>
+                  </motion.div>
+                ))}
               </div>
-              <AnimatePresence mode="popLayout">
-                <motion.p 
-                  key={liveCaption}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
-                  className="text-white text-xl md:text-2xl font-semibold leading-tight font-body tracking-tight relative z-10"
-                >
-                  {liveCaption}
-                </motion.p>
-              </AnimatePresence>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <AnimatePresence mode="wait">
-          {isListening && showLiveCaptions && aiLiveCaption && (
-            <motion.div
-              key="ai-caption"
-              initial={{ opacity: 0, y: 40, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 20, scale: 0.98 }}
-              transition={{ type: "spring", damping: 25, stiffness: 400 }}
-              className="fixed bottom-48 left-1/2 -translate-x-1/2 z-[60] px-8 py-6 bg-teal-600/90 backdrop-blur-2xl rounded-[2.5rem] border border-white/30 shadow-[0_25px_60px_-15px_rgba(13,148,136,0.5)] max-w-[92vw] md:max-w-2xl w-full text-center overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-b from-white/10 to-transparent pointer-events-none" />
-              <div className="flex items-center justify-center gap-3 mb-4 relative z-10">
-                <div className="p-1.5 rounded-full bg-white/20 backdrop-blur-md">
-                  <Sparkles size={14} className="text-white" />
-                </div>
-                <span className="text-[10px] font-black text-white/90 uppercase tracking-[0.4em] drop-shadow-sm">Padma Synthesis</span>
-              </div>
-              <AnimatePresence mode="popLayout">
-                <motion.p 
-                  key={aiLiveCaption}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
-                  className="text-white text-xl md:text-2xl font-semibold leading-tight font-body tracking-tight relative z-10"
-                >
-                  {aiLiveCaption}
-                </motion.p>
-              </AnimatePresence>
             </motion.div>
           )}
         </AnimatePresence>

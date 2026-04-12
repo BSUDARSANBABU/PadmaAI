@@ -15,6 +15,7 @@ export interface ChatMessage {
   text: string;
   timestamp: string;
   type?: 'analysis' | 'standard';
+  summary?: string;
 }
 
 export interface VoiceProfile {

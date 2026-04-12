@@ -33,6 +33,14 @@ export class GeminiLiveService {
     this.volume = Math.min(1, Math.max(0, value));
   }
 
+  setSpeechRate(value: number) {
+    this.currentSpeechRate = value;
+  }
+
+  setSpeechPitch(value: number) {
+    this.currentSpeechPitch = value;
+  }
+
   async connect(
     callbacks: LiveSessionCallbacks, 
     voiceName: string = "Zephyr", 
@@ -40,7 +48,8 @@ export class GeminiLiveService {
     speechPitch: number = 1.0, 
     model: string = "gemini-3.1-flash-live-preview",
     userName: string = "User",
-    historyContext: string = ""
+    historyContext: string = "",
+    language: string = "English"
   ) {
     this.callbacks = callbacks;
     this.currentSpeechRate = speechRate;
@@ -57,7 +66,8 @@ export class GeminiLiveService {
     const systemInstruction = `You are a helpful assistant named Padma. You are professional, concise, and intelligent.
 The user's name is ${userName || 'Sudarshan'}. Always address them by name when appropriate.
 The user may adopt a persona or style like "Ram", but you should always recognize them as Sudarshan.
-When the session starts, your first action MUST be to greet Sudarshan warmly and ask how you can assist today.
+CRITICAL: You MUST respond and speak ONLY in ${language}. Even if the user speaks to you in another language, you must reply in ${language}.
+When the session starts, your first action MUST be to greet Sudarshan warmly in ${language} and ask how you can assist today.
 ${historyContext ? `\nRecent conversation history for context:\n${historyContext}\n` : ''}
 Use this history to provide continuity in your responses. If the user mentions a previous topic, recall it.`;
 

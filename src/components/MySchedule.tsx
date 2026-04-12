@@ -5,10 +5,23 @@ import { useState } from 'react';
 
 interface MyScheduleProps {
   reminders: Reminder[];
+  googleEvents: any[];
+  isGoogleAuthenticated: boolean;
+  onConnectGoogle: () => void;
+  onSync: () => void;
+  isSyncing: boolean;
   onAddMeeting?: (title: string, date: string, time: string) => void;
 }
 
-export default function MySchedule({ reminders, onAddMeeting }: MyScheduleProps) {
+export default function MySchedule({ 
+  reminders, 
+  googleEvents, 
+  isGoogleAuthenticated, 
+  onConnectGoogle, 
+  onSync,
+  isSyncing,
+  onAddMeeting 
+}: MyScheduleProps) {
   const [currentDate, setCurrentDate] = useState(new Date());
 
   // Simple calendar logic
@@ -46,16 +59,36 @@ export default function MySchedule({ reminders, onAddMeeting }: MyScheduleProps)
                   <h2 className="text-2xl font-bold font-headline text-on-surface">
                     {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
                   </h2>
-                  <p className="text-sm text-on-surface-variant">Neural Schedule Synchronization</p>
+                  <p className="text-sm text-on-surface-variant">
+                    {isGoogleAuthenticated ? 'Google Calendar Synchronized' : 'Neural Schedule Synchronization'}
+                  </p>
                 </div>
               </div>
-              <div className="flex gap-2">
-                <button onClick={prevMonth} className="p-2 hover:bg-surface-container-high rounded-xl transition-all">
-                  <ChevronLeft size={20} />
-                </button>
-                <button onClick={nextMonth} className="p-2 hover:bg-surface-container-high rounded-xl transition-all">
-                  <ChevronRight size={20} />
-                </button>
+              <div className="flex items-center gap-4">
+                {!isGoogleAuthenticated ? (
+                  <button 
+                    onClick={onConnectGoogle}
+                    className="px-4 py-2 bg-primary text-white text-xs font-bold rounded-xl hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
+                  >
+                    Connect Google Calendar
+                  </button>
+                ) : (
+                  <button 
+                    onClick={onSync}
+                    disabled={isSyncing}
+                    className={`p-2 hover:bg-surface-container-high rounded-xl transition-all ${isSyncing ? 'animate-spin' : ''}`}
+                  >
+                    <Clock size={20} className="text-primary" />
+                  </button>
+                )}
+                <div className="flex gap-2">
+                  <button onClick={prevMonth} className="p-2 hover:bg-surface-container-high rounded-xl transition-all">
+                    <ChevronLeft size={20} />
+                  </button>
+                  <button onClick={nextMonth} className="p-2 hover:bg-surface-container-high rounded-xl transition-all">
+                    <ChevronRight size={20} />
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -119,7 +152,26 @@ export default function MySchedule({ reminders, onAddMeeting }: MyScheduleProps)
           <div className="p-8 rounded-[2.5rem] bg-surface-container shadow-sm border border-surface-container-high h-full">
             <h3 className="text-lg font-bold font-headline text-on-surface mb-6">Upcoming Events</h3>
             <div className="space-y-4">
-              {reminders.length > 0 ? (
+              {isGoogleAuthenticated && googleEvents.length > 0 ? (
+                googleEvents.map((event) => (
+                  <motion.div 
+                    key={event.id}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="p-4 rounded-2xl bg-surface-container-low border border-surface-variant/10 flex items-start gap-4"
+                  >
+                    <div className="p-2 rounded-xl bg-primary/10 text-primary">
+                      <CalendarIcon size={16} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-bold text-on-surface truncate">{event.summary}</h4>
+                      <p className="text-[10px] text-on-surface-variant font-medium">
+                        {event.start?.dateTime ? new Date(event.start.dateTime).toLocaleString() : 'All Day'}
+                      </p>
+                    </div>
+                  </motion.div>
+                ))
+              ) : reminders.length > 0 ? (
                 reminders.map((reminder) => (
                   <motion.div 
                     key={reminder.id}
