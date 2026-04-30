@@ -46,7 +46,7 @@ export class GeminiLiveService {
     voiceName: string = "Zephyr", 
     speechRate: number = 1.0, 
     speechPitch: number = 1.0, 
-    model: string = "gemini-3.1-flash-live-preview",
+    model: string = "gemini-2.0-flash-exp",
     userName: string = "User",
     historyContext: string = "",
     language: string = "English"
@@ -56,18 +56,26 @@ export class GeminiLiveService {
     this.currentSpeechPitch = speechPitch;
     
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("Gemini API key is missing. Please check your environment settings.");
+    if (!apiKey || apiKey === 'MY_API_KEY') {
+      throw new Error("Gemini API key is invalid or missing. Please ensure GEMINI_API_KEY is set in your environment variables via the Settings menu.");
     }
 
     // Create a new instance for every connection to ensure fresh API key
-    this.ai = new GoogleGenAI({ apiKey });
+    try {
+      this.ai = new GoogleGenAI({ apiKey });
+    } catch (err: any) {
+      throw new Error("Failed to initialize AI SDK: " + err.message);
+    }
 
-    const systemInstruction = `You are a helpful assistant named Padma. You are professional, concise, and intelligent.
-The user's name is ${userName || 'Sudarshan'}. Always address them by name when appropriate.
-The user may adopt a persona or style like "Ram", but you should always recognize them as Sudarshan.
+    const systemInstruction = `You are Padma, a highly intelligent and efficient assistant. 
+Your persona is strict and focused: "I am Padma. I am ready to assist you. What do you want?"
+When the user asks for news (e.g., India news), you MUST provide a minimum of 10 to 20 detailed headlines. 
+When asked to check portals (like Amazon Jobs, Naukri, LinkedIn, or Unstop), you must use your knowledge and synthesis capabilities to identify and list specific vacancies, walk-in drives, and software roles.
+Provide elaborated, high-depth responses (10-20 lines minimum) for technical or factual queries like Python or Job search results.
+Do not include unnecessary conversational filler or talk about "development" unless specifically asked.
+The user's name is ${userName || 'Sudarshan'}.
 CRITICAL: You MUST respond and speak ONLY in ${language}. Even if the user speaks to you in another language, you must reply in ${language}.
-When the session starts, your first action MUST be to greet Sudarshan warmly in ${language} and ask how you can assist today.
+When the session starts, your first action MUST be to say exactly: "I am Padma. I am ready to assist you. What do you want?" in ${language}.
 ${historyContext ? `\nRecent conversation history for context:\n${historyContext}\n` : ''}
 Use this history to provide continuity in your responses. If the user mentions a previous topic, recall it.`;
 
@@ -185,13 +193,23 @@ Use this history to provide continuity in your responses. If the user mentions a
               callbacks.onAudioEnd?.();
             }
           },
-          onerror: (err) => {
+          onerror: (err: any) => {
             console.error("Live session error details:", err);
-            let message = err.message || "A connection error occurred.";
-            if (message.includes("Network error")) {
-              message = "Network connection lost. Please check your internet and try again.";
+            let message = "A connection error occurred.";
+            if (typeof err === 'string') {
+              message = err;
+            } else if (err instanceof Error) {
+              message = err.message;
+            } else if (err && typeof err === 'object' && err.message) {
+              message = err.message;
+            }
+            
+            if (message.includes("Network error") || message.includes("Failed to fetch")) {
+              message = "Network connection lost or blocked. Please check your internet and try again. This can also happen if the API key is invalid.";
             } else if (message.includes("Internal error")) {
               message = "The AI service encountered an internal error. This can happen due to high load or transient issues. Please try again in a moment.";
+            } else if (message.includes("not found") || message.includes("404")) {
+              message = "The selected model was not found. Please try switching to Gemini 2.0 Flash in settings.";
             }
             callbacks.onError?.(new Error(message));
           },
